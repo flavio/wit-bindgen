@@ -1,0 +1,21 @@
+[package]
+name = "wit-bindgen-wasmi"
+version = "0.2.0"
+authors = ["Flavio Castelli <flavio@castelli.me>"]
+edition = "2018"
+
+[dependencies]
+anyhow = "1.0"
+bitflags = "1.2"
+thiserror = "1.0"
+wasmi = "0.25"
+wit-bindgen-wasmi-impl = { path = "../wasmi-impl", version = "0.2" }
+tracing-lib = { version = "0.1.26", optional = true, package = 'tracing' }
+async-trait = { version = "0.1.50", optional = true }
+
+[features]
+# Enables generated code to emit events via the `tracing` crate whenever wasm is
+# entered and when native functions are called. Note that tracing is currently
+# only done for imported functions.
+tracing = ['tracing-lib', 'wit-bindgen-wasmi-impl/tracing']
+

@@ -1,0 +1,21 @@
+[package]
+name = "wit-bindgen-gen-wasmi"
+version = "0.2.0"
+authors = ["Flavio Castelli <flavio@castelli.me>"]
+edition = "2018"
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+wit-bindgen-gen-core = { path = '../gen-core', version = '0.2.0' }
+wit-bindgen-gen-rust = { path = '../gen-rust', version = '0.2.0' }
+heck = "0.3"
+structopt = { version = "0.3", default-features = false, optional = true }
+
+[dev-dependencies]
+anyhow = "1.0"
+test-helpers = { path = '../test-helpers', features = ['wit-bindgen-gen-wasmtime'] }
+wasmi = "0.25"
+wit-bindgen-wasmi = { path = '../wasmi', features = ['tracing'] }
