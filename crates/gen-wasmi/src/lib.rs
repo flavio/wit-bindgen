@@ -810,7 +810,6 @@ impl Generator for Wasmi {
             // async is not supported
             let is_async = false;
             self.push_str("\npub fn add_to_linker<T, U>(linker: &mut wasmi::Linker<T>");
-            self.push_str(", ctx: &mut impl wasmi::AsContextMut<UserState = T>");
             self.push_str(", get: impl Fn(&mut T) -> ");
             if self.all_needed_handles.is_empty() {
                 self.push_str("&mut U");
@@ -831,28 +830,17 @@ impl Generator for Wasmi {
                 self.push_str("use wit_bindgen_wasmi::rt::get_func;\n");
             }
             for f in funcs {
+                let method = String::from("func_wrap");
                 self.push_str(&format!(
-                    "
-                    let {module_sanitized}_{sanitized_name}_fn = wasmi::Func::wrap(
-                        ctx.as_context_mut(),
-                        {closure});
-                    linker.define(
-                        \"{module}\",
-                        \"{name}\",
-                        {module_sanitized}_{sanitized_name}_fn)?;
-                    ",
-                    module = module,
-                    module_sanitized = module.replace("-", "_"),
-                    name = f.name,
-                    sanitized_name = f.name.replace("::", "_").replace("-", "_"),
-                    closure = f.closure,
+                    "linker.{}(\"{}\", \"{}\", {})?;\n",
+                    method, module, f.name, f.closure,
                 ));
             }
             for handle in self.all_needed_handles.iter() {
                 self.src.push_str(&format!(
-                    "
-                    let resource_drop_{name}_fn = wasmi::Func::wrap(
-                        ctx.as_context_mut(),
+                    "linker.func_wrap(
+                        \"canonical_abi\",
+                        \"resource_drop_{name}\",
                         move |mut caller: wasmi::Caller<'_, T>, handle: u32| {{
                             let (host, tables) = get(caller.data_mut());
                             let handle = tables
@@ -864,11 +852,6 @@ impl Generator for Wasmi {
                             host.drop_{snake}(handle);
                             Ok(())
                         }}
-                    );
-                    linker.define(
-                        \"canonical_abi\",
-                        \"resource_drop_{name}\",
-                        resource_drop_{name}_fn,
                     )?;\n",
                     name = handle,
                     snake = handle.to_snake_case(),
@@ -939,7 +922,6 @@ impl Generator for Wasmi {
                     /// the general store's state.
                     pub fn add_to_linker(
                         linker: &mut wasmi::Linker<T>,
-                        ctx: &mut impl wasmi::AsContextMut<UserState = T>,
                         get_state: impl Fn(&mut T) -> &mut {}Data + Send + Sync + Copy + 'static,
                     ) -> anyhow::Result<()> {{
                 ",
@@ -947,11 +929,12 @@ impl Generator for Wasmi {
             ));
             for r in self.exported_resources.iter() {
                 // async is not supported
-                let (call, wait, prefix, suffix) = ("call", "", "", "");
+                let (func_wrap, call, wait, prefix, suffix) = ("func_wrap", "call", "", "", "");
                 self.src.push_str(&format!(
                     "
-                        let resource_drop_{name}_fn = wasmi::Func::wrap(
-                            ctx.as_context_mut(),
+                        linker.{func_wrap}(
+                            \"canonical_abi\",
+                            \"resource_drop_{name}\",
                             move |mut caller: wasmi::Caller<'_, T>, idx: u32| {prefix}{{
                                 let state = get_state(caller.data_mut());
                                 let resource_idx = state.index_slab{idx}.remove(idx)?;
@@ -963,58 +946,39 @@ impl Generator for Wasmi {
                                 dtor.{call}(&mut caller, wasm){wait}?;
                                 Ok(())
                             }}{suffix},
-                        );
-                        linker.define(
-                            \"canonical_abi\",
-                            \"resource_drop_{name}\",
-                            resource_drop_{name}_fn,
                         )?;
-
-                        let resource_clone_{name}_fn = wasmi::Func::wrap(
-                            ctx.as_context_mut(),
+                        linker.func_wrap(
+                            \"canonical_abi\",
+                            \"resource_clone_{name}\",
                             move |mut caller: wasmi::Caller<'_, T>, idx: u32| {{
                                 let state = get_state(caller.data_mut());
                                 let resource_idx = state.index_slab{idx}.get(idx)?;
                                 state.resource_slab{idx}.clone(resource_idx)?;
                                 Ok(state.index_slab{idx}.insert(resource_idx))
                             }},
-                        );
-                        linker.define(
-                            \"canonical_abi\",
-                            \"resource_clone_{name}\",
-                            resource_clone_{name}_fn,
                         )?;
-
-                        let resource_get_{name}_fn = wasmi::Func::wrap(
-                            ctx.as_context_mut(),
+                        linker.func_wrap(
+                            \"canonical_abi\",
+                            \"resource_get_{name}\",
                             move |mut caller: wasmi::Caller<'_, T>, idx: u32| {{
                                 let state = get_state(caller.data_mut());
                                 let resource_idx = state.index_slab{idx}.get(idx)?;
                                 Ok(state.resource_slab{idx}.get(resource_idx))
                             }},
-                        );
-                        linker.define(
-                            \"canonical_abi\",
-                            \"resource_get_{name}\",
-                            resource_get_{name}_fn,
                         )?;
-
-                        let resource_new_{name}_fn = wasmi::Func::wrap(
-                            ctx.as_context_mut(),
+                        linker.func_wrap(
+                            \"canonical_abi\",
+                            \"resource_new_{name}\",
                             move |mut caller: wasmi::Caller<'_, T>, val: i32| {{
                                 let state = get_state(caller.data_mut());
                                 let resource_idx = state.resource_slab{idx}.insert(val);
                                 Ok(state.index_slab{idx}.insert(resource_idx))
                             }},
-                        );
-                        linker.define(
-                            \"canonical_abi\",
-                            \"resource_new_{name}\",
-                            resource_new_{name}_fn,
                         )?;
                     ",
                     name = iface.resources[*r].name,
                     idx = r.index(),
+                    func_wrap = func_wrap,
                     call = call,
                     wait = wait,
                     prefix = prefix,
@@ -1048,7 +1012,7 @@ impl Generator for Wasmi {
                         linker: &mut wasmi::Linker<T>,
                         get_state: impl Fn(&mut T) -> &mut {}Data + Send + Sync + Copy + 'static,
                     ) -> anyhow::Result<(Self, wasmi::Instance)> {{
-                        Self::add_to_linker(linker, &mut store, get_state)?;
+                        Self::add_to_linker(linker, get_state)?;
                         let instance = linker.instantiate{}(&mut store, module){}?.start(&mut store)?;
                         Ok((Self::new(store, &instance,get_state)?, instance))
                     }}
